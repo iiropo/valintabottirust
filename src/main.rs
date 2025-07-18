@@ -15,19 +15,19 @@ pub async fn send_request(
     let custom_body = format!(
         "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
         message_value, formkey
+        // "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
     );
 
     let response = client
         .post("https://ouka.inschool.fi/!02227756/selection/postback")
         .header("Host", "ouka.inschool.fi")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0")
         .header("Accept", "*/*")
         .header("Accept-Language", "en-US,en\\=0.5")
-        .header("Accept-Encoding", "gzip, deflate, br, zstd")
+        // .header("Accept-Encoding", "gzip, deflate, br, zstd")
         .header("Referer", "https://ouka.inschool.fi/!02227756/selection/view?")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "https://ouka.inschool.fi")
-        .header("DNT", "1")
         .header("Connection", "keep-alive")
         .header("Cookie", format!("Wilma2SID={}", wilma2sid_value))
         .header("Sec-Fetch-Dest", "empty")
@@ -47,12 +47,16 @@ pub async fn send_request(
 
     let status = response.status(); // Extract the status before consuming the response
     let body = response.text().await?;
-    if body.contains("SrvError") {
-        return Err(Box::from(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Response contains SrvError",
-        )));
+    if body.contains("srvError('Valintaa ei voi muuttaa', 'Ryhmä on jo valittu.');") {
+       println!("Jo valittu ryhmä, ei tarvitse muuttaa.");
     }
+        else if body.contains("srvError") {
+            println!("Body: {}", body);
+            return Err(Box::from(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Response contains SrvError",
+            )));
+        }
 
     println!("Status: {}", status); // Use the extracted status
     println!("Body: {}", body);
@@ -62,8 +66,7 @@ pub async fn send_request(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Option to bypass timer (set to true to start immediately)
-    let bypass_timer = false;
-
+    let bypass_timer = true;
     // Set your desired start time (24-hour format)
     let target_time_str = "12:00";
 
@@ -93,38 +96,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Starting execution at {}", Local::now().format("%H:%M:%S"));
 
     let message_values = vec![
-        "56A65493_27319_46162&",
-        "56A65493_27319_38845&",
-        "56A65493_27319_47276&",
-        "56A65493_27319_37304&",
-        "56A65493_27319_39950&",
-        "56A65493_27319_57503&",
-        "56A65493_27319_38968&",
-        "56A65493_27548_39346&",
-        "56A65493_27548_57468&",
-        "56A65493_27548_39280&",
-        "56A65493_27548_52473&",
-        "56A65493_27548_51813&",
-        "56A65493_27548_39322&",
-        "56A65493_27548_39362&",
-        "56A65493_27623_57478&",
-        "56A65493_27623_46945&",
-        "56A65493_27623_38999&",
-        "56A65493_27623_39695&",
-        "56A65493_27623_52454&",
-        "56A65493_27623_46049&",
-        "56A65493_27677_57488&",
-        "56A65493_27677_39291&",
-        "56A65493_27677_39154&",
-        "56A65493_27677_46898&",
-        "56A65493_27677_39307&",
-        "56A65493_27677_39941&",
-        "56A65493_27682_31709&",
-        "56A65493_27682_57491&",
-        "56A65493_27682_39299&",
-        "56A65493_27682_39313&",
-        "56A65493_27682_46893&",
-        "56A65493_27682_39358&"
+        "56A65493_27623_39354&"
     ];
 
     // Create HTTP client with timeout configuration
@@ -133,8 +105,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .pool_max_idle_per_host(10)
         .build()?);
 
-    let wilma2sid = "e612928fa4bc102bd2d3faa5f61e99f8";
-    let formkey = "student%3A227756%3A429aeb5e611783c7cbad772f36f2133c";
+    let wilma2sid = "88e36f6a1268ee4b6f21bcc2a1c11bbf";
+    let formkey = "student%3A227756%3A08285c37d0f623f71e67cf5f9ad7a247";
     let start = Instant::now();
     let concurrency = 10;
     let max_retries = 15;
@@ -145,7 +117,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     while !pending.is_empty() && retry_attempts < max_retries {
         if retry_attempts > 0 {
-            let backoff = Duration::from_millis(500 * 2_u64.pow(retry_attempts as u32));
+            let backoff = Duration::from_millis(1000);
             println!("Retry attempt {}/{}. Waiting {:?} before retrying {} items...",
                      retry_attempts, max_retries, backoff, pending.len());
             sleep(backoff).await;
