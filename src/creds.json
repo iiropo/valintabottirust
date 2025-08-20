@@ -1,0 +1,9 @@
+{
+  "wilma2sid": "WILMA2SID",
+  "formkey": "FORMKEY",
+  "time": "AIKA",
+  "bypass": false,
+  "target": [
+    "KURSSI&"
+  ]
+}

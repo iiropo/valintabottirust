@@ -1,10 +1,22 @@
 use std::error::Error;
+use std::fs::File;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use chrono::{Local, NaiveTime};
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
+use serde::Deserialize;
 use tokio::time::sleep;
+
+#[derive(Deserialize)]
+struct Credentials {
+    wilma2sid: String,
+    formkey: String,
+    time: String,
+    bypass: bool,
+    target: Vec<String>,
+}
 
 pub async fn send_request(
     client: Arc<Client>,
@@ -15,7 +27,6 @@ pub async fn send_request(
     let custom_body = format!(
         "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
         message_value, formkey
-        // "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
     );
 
     let response = client
@@ -24,7 +35,6 @@ pub async fn send_request(
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0")
         .header("Accept", "*/*")
         .header("Accept-Language", "en-US,en\\=0.5")
-        // .header("Accept-Encoding", "gzip, deflate, br, zstd")
         .header("Referer", "https://ouka.inschool.fi/!02227756/selection/view?")
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "https://ouka.inschool.fi")
@@ -48,15 +58,15 @@ pub async fn send_request(
     let status = response.status(); // Extract the status before consuming the response
     let body = response.text().await?;
     if body.contains("srvError('Valintaa ei voi muuttaa', 'Ryhmä on jo valittu.');") {
-       println!("Jo valittu ryhmä, ei tarvitse muuttaa.");
+        println!("Jo valittu ryhmä, ei tarvitse muuttaa.");
     }
-        else if body.contains("srvError") {
-            println!("Body: {}", body);
-            return Err(Box::from(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Response contains SrvError",
-            )));
-        }
+    else if body.contains("srvError") {
+        println!("Body: {}", body);
+        return Err(Box::from(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Response contains SrvError",
+        )));
+    }
 
     println!("Status: {}", status); // Use the extracted status
     println!("Body: {}", body);
@@ -65,10 +75,16 @@ pub async fn send_request(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    // Read credentials from creds.json
+    let mut file = File::open("src/creds.json")?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+    let creds: Credentials = serde_json::from_str(&contents)?;
+
     // Option to bypass timer (set to true to start immediately)
-    let bypass_timer = true;
+    let bypass_timer = &creds.bypass;
     // Set your desired start time (24-hour format)
-    let target_time_str = "12:00";
+    let target_time_str = &creds.time;
 
     if !bypass_timer {
         // Parse the target time
@@ -95,9 +111,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     println!("Starting execution at {}", Local::now().format("%H:%M:%S"));
 
-    let message_values = vec![
-        "56A65493_27623_39354&"
-    ];
+    let message_values = creds.target;
 
     // Create HTTP client with timeout configuration
     let client = Arc::new(Client::builder()
@@ -105,8 +119,8 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .pool_max_idle_per_host(10)
         .build()?);
 
-    let wilma2sid = "88e36f6a1268ee4b6f21bcc2a1c11bbf";
-    let formkey = "student%3A227756%3A08285c37d0f623f71e67cf5f9ad7a247";
+    let wilma2sid = &creds.wilma2sid;
+    let formkey = &creds.formkey;
     let start = Instant::now();
     let concurrency = 10;
     let max_retries = 15;
@@ -123,11 +137,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             sleep(backoff).await;
         }
 
+        let wilma2sid_clone = wilma2sid.to_string();
+        let formkey_clone = formkey.to_string();
+
         pending = stream::iter(std::mem::take(&mut pending))
             .map(|msg| {
                 let client = Arc::clone(&client);
+                let wilma2sid = wilma2sid_clone.clone();
+                let formkey = formkey_clone.clone();
                 async move {
-                    match send_request(client, &msg, wilma2sid, formkey).await {
+                    match send_request(client, &msg, &wilma2sid, &formkey).await {
                         Ok(_) => {
                             println!("{} succeeded", msg);
                             (msg, true)
