@@ -13,6 +13,7 @@ use tokio::time::sleep;
 struct Credentials {
     wilma2sid: String,
     formkey: String,
+    school_id: String,
     time: String,
     bypass: bool,
     target: Vec<String>,
@@ -23,19 +24,25 @@ pub async fn send_request(
     message_value: &str,
     wilma2sid_value: &str,
     formkey: &str,
+    school_id: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let custom_body = format!(
         "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
         message_value, formkey
     );
 
+    let url = format!("https://ouka.inschool.fi/!{}/selection/postback", school_id);
+
     let response = client
-        .post("https://ouka.inschool.fi/!02227756/selection/postback")
+        .post(format!("https://ouka.inschool.fi/!{}/selection/postback", school_id))
         .header("Host", "ouka.inschool.fi")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0")
         .header("Accept", "*/*")
         .header("Accept-Language", "en-US,en\\=0.5")
-        .header("Referer", "https://ouka.inschool.fi/!02227756/selection/view?")
+        .header(
+            "Referer",
+            format!("https://ouka.inschool.fi/!{}/selection/view?", school_id),
+        )
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "https://ouka.inschool.fi")
         .header("Connection", "keep-alive")
@@ -121,6 +128,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let wilma2sid = &creds.wilma2sid;
     let formkey = &creds.formkey;
+    let school_id = &creds.school_id;
     let start = Instant::now();
     let concurrency = 10;
     let max_retries = 15;
@@ -139,6 +147,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
         let wilma2sid_clone = wilma2sid.to_string();
         let formkey_clone = formkey.to_string();
+        let school_id_clone = school_id.to_string();
 
         pending = stream::iter(std::mem::take(&mut pending))
             .map(|msg| {
@@ -146,7 +155,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 let wilma2sid = wilma2sid_clone.clone();
                 let formkey = formkey_clone.clone();
                 async move {
-                    match send_request(client, &msg, &wilma2sid, &formkey).await {
+                    match send_request(client, &msg, &wilma2sid, &formkey, &school_id).await {
                         Ok(_) => {
                             println!("{} succeeded", msg);
                             (msg, true)

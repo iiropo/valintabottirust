@@ -1,9 +1,10 @@
 {
-  "wilma2sid": "WILMA2SID",
-  "formkey": "FORMKEY",
+  "wilma2sid": "2e3a11f121a1a1d09b354431838789d7",
+  "school_id": "02227756",
+  "formkey": "student%3A227756%3Aa2906352aff27732cb12220c6ccf4156",
   "time": "AIKA",
-  "bypass": false,
+  "bypass": true,
   "target": [
-    "KURSSI&"
+    "56A65493_27623_39703&"
   ]
 }
