@@ -11,9 +11,13 @@ use tokio::time::sleep;
 
 #[derive(Deserialize)]
 struct Credentials {
-    wilma2sid: String,
+    session_id: String,
     formkey: String,
     school_id: String,
+}
+
+#[derive(Deserialize)]
+struct SelectConfig {
     time: String,
     bypass: bool,
     target: Vec<String>,
@@ -27,29 +31,34 @@ pub async fn send_request(
     school_id: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let custom_body = format!(
-        "message=pick-group&target={}&formkey={}&interest=56A65493_27548&refresh=21810&extras=56A65493",
+        "message=pick-group&target={}&formkey={}",
         message_value, formkey
     );
 
-    let url = format!("https://ouka.inschool.fi/!{}/selection/postback", school_id);
+    let _ = format!("https://ouka.inschool.fi/!{}/selection/postback", school_id);
 
     let response = client
         .post(format!("https://ouka.inschool.fi/!{}/selection/postback", school_id))
         .header("Host", "ouka.inschool.fi")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0")
         .header("Accept", "*/*")
-        .header("Accept-Language", "en-US,en\\=0.5")
+        .header("Accept-Language", "en-GB,en;q=0.9")
+        .header("Accept-Encoding", "identity")
         .header(
             "Referer",
             format!("https://ouka.inschool.fi/!{}/selection/view?", school_id),
         )
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Origin", "https://ouka.inschool.fi")
+        .header("DNT", "1")
+        .header("Sec-GPC", "1")
         .header("Connection", "keep-alive")
-        .header("Cookie", format!("Wilma2SID={}", wilma2sid_value))
+        .header("Cookie", format!("enableAnalytics_85932=false; Wilma2SID={}", wilma2sid_value))
         .header("Sec-Fetch-Dest", "empty")
         .header("Sec-Fetch-Mode", "cors")
-        .header("Sec-Fetch-Site", "same\\-origin")
+        .header("Sec-Fetch-Site", "same-origin")
+        .header("Pragma", "no-cache")
+        .header("Cache-Control", "no-cache")
         .header("TE", "trailers")
         .body(custom_body)
         .send()
@@ -88,14 +97,20 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     file.read_to_string(&mut contents)?;
     let creds: Credentials = serde_json::from_str(&contents)?;
 
+    // Read config from select.json
+    let mut select_file = File::open("src/select.json")?;
+    let mut select_contents = String::new();
+    select_file.read_to_string(&mut select_contents)?;
+    let select_config: SelectConfig = serde_json::from_str(&select_contents)?;
+
     // Option to bypass timer (set to true to start immediately)
-    let bypass_timer = &creds.bypass;
+    let bypass_timer = &select_config.bypass;
     // Set your desired start time (24-hour format)
-    let target_time_str = &creds.time;
+    let target_time_str = &select_config.time;
 
     if !bypass_timer {
         // Parse the target time
-        let target_time = NaiveTime::parse_from_str(target_time_str, "%H:%M")?;
+        let target_time = NaiveTime::parse_from_str(target_time_str, "%H:%M:%S")?;
 
         // Get current time and calculate wait duration
         let now = Local::now();
@@ -118,7 +133,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     println!("Starting execution at {}", Local::now().format("%H:%M:%S"));
 
-    let message_values = creds.target;
+    let message_values = select_config.target;
 
     // Create HTTP client with timeout configuration
     let client = Arc::new(Client::builder()
@@ -126,7 +141,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .pool_max_idle_per_host(10)
         .build()?);
 
-    let wilma2sid = &creds.wilma2sid;
+    let wilma2sid = &creds.session_id;
     let formkey = &creds.formkey;
     let school_id = &creds.school_id;
     let start = Instant::now();
@@ -147,7 +162,7 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
         let wilma2sid_clone = wilma2sid.to_string();
         let formkey_clone = formkey.to_string();
-        let school_id_clone = school_id.to_string();
+        school_id.to_string();
 
         pending = stream::iter(std::mem::take(&mut pending))
             .map(|msg| {
