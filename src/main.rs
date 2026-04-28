@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use chrono::{Local, NaiveTime};
 use futures::stream::{self, StreamExt};
-use reqwest::Client;
+use reqwest::{Client, header::{HeaderMap, HeaderValue}};
 use serde::Deserialize;
 use tokio::time::sleep;
 
@@ -26,40 +26,16 @@ struct SelectConfig {
 pub async fn send_request(
     client: Arc<Client>,
     message_value: &str,
-    wilma2sid_value: &str,
     formkey: &str,
-    school_id: &str,
+    url: &str,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let custom_body = format!(
         "message=pick-group&target={}&formkey={}",
         message_value, formkey
     );
 
-    let _ = format!("https://ouka.inschool.fi/!{}/selection/postback", school_id);
-
     let response = client
-        .post(format!("https://ouka.inschool.fi/!{}/selection/postback", school_id))
-        .header("Host", "ouka.inschool.fi")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0")
-        .header("Accept", "*/*")
-        .header("Accept-Language", "en-GB,en;q=0.9")
-        .header("Accept-Encoding", "identity")
-        .header(
-            "Referer",
-            format!("https://ouka.inschool.fi/!{}/selection/view?", school_id),
-        )
-        .header("Content-Type", "application/x-www-form-urlencoded")
-        .header("Origin", "https://ouka.inschool.fi")
-        .header("DNT", "1")
-        .header("Sec-GPC", "1")
-        .header("Connection", "keep-alive")
-        .header("Cookie", format!("enableAnalytics_85932=false; Wilma2SID={}", wilma2sid_value))
-        .header("Sec-Fetch-Dest", "empty")
-        .header("Sec-Fetch-Mode", "cors")
-        .header("Sec-Fetch-Site", "same-origin")
-        .header("Pragma", "no-cache")
-        .header("Cache-Control", "no-cache")
-        .header("TE", "trailers")
+        .post(url)
         .body(custom_body)
         .send()
         .await?;
@@ -108,25 +84,30 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     // Set your desired start time (24-hour format)
     let target_time_str = &select_config.time;
 
+    let concurrency = 10;
+    let max_retries = 15;
+
     if !bypass_timer {
         // Parse the target time
         let target_time = NaiveTime::parse_from_str(target_time_str, "%H:%M:%S")?;
 
         // Get current time and calculate wait duration
         let now = Local::now();
-        let mut target_datetime = now.date().and_time(target_time).unwrap();
+        let mut target_datetime = now.date_naive().and_time(target_time);
 
         // If target time has already passed today, schedule for tomorrow
-        if target_datetime < now {
+        if target_datetime < now.naive_local() {
             target_datetime = target_datetime + chrono::Duration::days(1);
         }
 
+        let target_local = target_datetime.and_local_timezone(Local).unwrap();
+
         println!("Scheduled to start at {} (in {:?})",
-                 target_datetime.format("%Y-%m-%d %H:%M:%S"),
-                 target_datetime.signed_duration_since(now));
+                 target_local.format("%Y-%m-%d %H:%M:%S"),
+                 target_local.signed_duration_since(now));
 
         // Wait until the scheduled time
-        tokio::time::sleep((target_datetime - now).to_std()?).await;
+        tokio::time::sleep((target_local - now).to_std()?).await;
     } else {
         println!("Timer bypassed, starting immediately");
     }
@@ -135,22 +116,52 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let message_values = select_config.target;
 
-    // Create HTTP client with timeout configuration
-    let client = Arc::new(Client::builder()
-        .timeout(Duration::from_secs(30))
-        .pool_max_idle_per_host(10)
-        .build()?);
-
     let wilma2sid = &creds.session_id;
     let formkey = &creds.formkey;
     let school_id = &creds.school_id;
+
+    // Pre-allocate headers to avoid rebuilding them per request
+    let mut headers = HeaderMap::new();
+    headers.insert("Host", HeaderValue::from_static("ouka.inschool.fi"));
+    headers.insert("User-Agent", HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0"));
+    headers.insert("Accept", HeaderValue::from_static("*/*"));
+    headers.insert("Accept-Language", HeaderValue::from_static("en-GB,en;q=0.9"));
+    headers.insert("Accept-Encoding", HeaderValue::from_static("identity"));
+
+    let referer = format!("https://ouka.inschool.fi/!{}/selection/view?", school_id);
+    headers.insert("Referer", HeaderValue::from_str(&referer)?);
+
+    headers.insert("Content-Type", HeaderValue::from_static("application/x-www-form-urlencoded"));
+    headers.insert("Origin", HeaderValue::from_static("https://ouka.inschool.fi"));
+    headers.insert("DNT", HeaderValue::from_static("1"));
+    headers.insert("Sec-GPC", HeaderValue::from_static("1"));
+    headers.insert("Connection", HeaderValue::from_static("keep-alive"));
+
+    let cookie = format!("enableAnalytics_85932=false; Wilma2SID={}", wilma2sid);
+    headers.insert("Cookie", HeaderValue::from_str(&cookie)?);
+
+    headers.insert("Sec-Fetch-Dest", HeaderValue::from_static("empty"));
+    headers.insert("Sec-Fetch-Mode", HeaderValue::from_static("cors"));
+    headers.insert("Sec-Fetch-Site", HeaderValue::from_static("same-origin"));
+    headers.insert("Pragma", HeaderValue::from_static("no-cache"));
+    headers.insert("Cache-Control", HeaderValue::from_static("no-cache"));
+    headers.insert("TE", HeaderValue::from_static("trailers"));
+
+    // Create HTTP client with timeout configuration and default headers
+    let client = Arc::new(Client::builder()
+        .timeout(Duration::from_secs(30))
+        .pool_max_idle_per_host(concurrency as usize)
+        .default_headers(headers)
+        .tcp_nodelay(true) // Optimize TCP to send data directly without delay
+        .build()?);
+
+    let url = format!("https://ouka.inschool.fi/!{}/selection/postback", school_id);
     let start = Instant::now();
-    let concurrency = 10;
-    let max_retries = 15;
 
     let mut retry_attempts = 0;
     let mut pending = message_values.clone();
     let total = pending.len();
+    let url_clone = url.clone();
 
     while !pending.is_empty() && retry_attempts < max_retries {
         if retry_attempts > 0 {
@@ -160,17 +171,16 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             sleep(backoff).await;
         }
 
-        let wilma2sid_clone = wilma2sid.to_string();
         let formkey_clone = formkey.to_string();
-        school_id.to_string();
+        let url_shared = url_clone.clone();
 
         pending = stream::iter(std::mem::take(&mut pending))
             .map(|msg| {
                 let client = Arc::clone(&client);
-                let wilma2sid = wilma2sid_clone.clone();
                 let formkey = formkey_clone.clone();
+                let url = url_shared.clone();
                 async move {
-                    match send_request(client, &msg, &wilma2sid, &formkey, &school_id).await {
+                    match send_request(client, &msg, &formkey, &url).await {
                         Ok(_) => {
                             println!("{} succeeded", msg);
                             (msg, true)
